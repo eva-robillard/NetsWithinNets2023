@@ -1,406 +1,281 @@
-//Imports
-import java.util.Scanner;
+// Code for the "Eval" class
+// To compile all the required files, just execute "javac *.java"
+
 import java.util.Set;
 import java.util.Iterator;
-import java.util.HashSet;
-import java.util.Arrays;
-import java.util.Map;
-import java.util.HashMap;
-import java.util.Hashtable;
-import java.util.EnumMap;
-import java.util.IdentityHashMap;
-import java.util.LinkedHashMap;
-import java.util.Properties;
 import java.util.TreeMap;
-import java.util.WeakHashMap;
-import java.util.Collections;
-import java.util.List;
-import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.HashMap;
+import java.util.SortedMap;
 
 public class Eval {
+    // P-indexed: partition occupacy multiset
+    private static String partitionOccStr;                  
+    private static SMultiSet partitionOccBag;
 
+    // P-indexed: partition capacity multiset; "4'p1,1'p2,1'p3,1'p4,1'p5"
+    private static String capStr;                  
+    private static SMultiSet capBag;
 
-    public static String cap_str;                  //current global capacity (string)
-    private static Map<String, Integer> cap_map_init;    //Initial global capacity (map) 
-    private static String log_str;                  //Initial logical state multiset (string)
+    // Y-indexed: "h" mapping. For a given p\in P, h(p) is the
+    // set of regions to which p belongs
+    // "p1,b4|p5,b1|...|p4,b1,b2"
+    private static String hStr;                  
+    private static SortedMap<String,Set<String>> hBag;
 
-    static final String SEP = "'";                  //Separation element for multisets
+    // set B of boolean variables. They will be extracted from "hBag"
+    private static Set<String> B;
 
-    //Initialization function with initial global capacity & initial logic state multiset
-    public Eval(String cap, String log) {
-        cap_str = cap;
-        cap_map_init = string2map(cap);
-        log_str = log;
-    }
+    // set P of partitions. They will be extracted from "capBag"
+    private static Set<String> P;
 
-    //Function to verify that to formulas do not contradict each other (regarding negations)
-    //f1,f2 are of the form "a" or "!a"
-    private static boolean negated(String f1, String f2) {
-        return
-            (f1.charAt(0) == '!' && f2.charAt(0) != '!' && f1.substring(1).equals(f2))
-            ||
-            (f2.charAt(0) == '!' && f1.charAt(0) != '!' && f2.substring(1).equals(f1));
-    }
+    static final String SEP = "'";
 
-    //Returns a map of the considered String multiset
-    //Multiset are of forms "1'a,2'b" for example (depending on SEP and the form of separation, here a comma)
-    public static Map<String,Integer> string2map(String token) {
-        String[] valC = token.split(",");
-        Map<String,Integer> res = new HashMap<String,Integer>();
+    //---------------------------------------------------------------------------
+    // Initialization function with initial global capacity, region occupancy
+    // and h function
+     public Eval(String cap,String part,String h) {
+        capStr = cap;
+        partitionOccStr = part;
 
-        for(int i=0; i<valC.length; i++) {
-            String[] term = valC[i].split(SEP);
+        capBag = new SMultiSet(cap);
+        partitionOccBag = new SMultiSet(partitionOccStr);
 
-            if (term.length == 1) { //"a"
-                res.put(term[0],1);
-            } else {
-                res.put(term[1],Integer.parseInt(term[0]));
-            }
+        hStr = h;
+        hBag = h2bag(hStr);
+
+        // compute B set
+        B = new HashSet<String>();
+        for (SortedMap.Entry<String,Set<String>> entry : hBag.entrySet()) {
+            B.addAll(entry.getValue());
         }
+
+        // compute P set
+        P = capBag.keySet();
+    }
+    //---------------------------------------------------------------------------
+    //"hS" is of the form "p1,b4|p5,b1|p2,b3|p3,b2|p4,b1,b2"
+    // returns a map such that res[p4]={b1,b2},res[p1]={b4},...
+    public static SortedMap<String,Set<String>> h2bag(String hS) {
+
+        SortedMap<String,Set<String>> res = new TreeMap<String,Set<String>>();
+        String[] els = hS.split("\\|");
+
+        for (String s : els) {
+            String[] h_p = s.split(",");
+            Set<String> images = new HashSet<String>();
+            for (int i=1;i<h_p.length;i++) {
+                images.add(h_p[i]);
+            }
+            res.put(h_p[0],images);
+        }
+       
         return res;
     }
-
-    //"mapTuple" is not empty. It represents a multi-set
-    //The value of each key is assumed to be > 0
-    //Returns a string of the considered Map multiset
-    public static String map2string(Map<String,Integer> mapTuple) {
-        Set<String> keys = mapTuple.keySet();
-        Iterator<String> it = keys.iterator();
+    //---------------------------------------------------------------------------
+    //"hB" is of the form hB[p4]={b1,b2},hB[p1]={b4},...
+    // returns a string of the form "p1,b4|p5,b1|p2,b3|p3,b2|p4,b1,b2"
+    public static String h2string(SortedMap<String,Set<String>> hB) {
         String res = "";
-        String k = it.next();
 
-        res += mapTuple.get(k) + SEP + k;
-
-        while(it.hasNext()) {
-            k = it.next();
-            if(mapTuple.get(k) != 0) {
-                res += "," + mapTuple.get(k) + SEP + k;
+        for (SortedMap.Entry<String,Set<String>> entry : hB.entrySet()) {
+            res = res + entry.getKey();
+            for (String s : entry.getValue()) {
+                res = res + "," + s;
             }
+            res = res + "|";
         }
+
+        if (res.endsWith("|")) {
+            res = res.substring(0, res.length() - 1);
+        }
+       
         return res;
     }
-
-    //This function takes an unknown number of entries : for the unknown number of robots that can be taken into account within a
-    //System Net transition.
-    public static boolean synchro(String buchi, String...args)
-    //args of even index : robot formula, args of uneven index : condition of the cap
-    //Function which be executed first if there is 1 robot or more (unknown number)
-    {
-        //Initialization
-        Set<String> b = new HashSet<String>(Arrays.asList(buchi.split(",")));
-        Set<String> s = new HashSet<String>();
-        int x1=0;
-        int x2=0;
-        int k=0;
-        String r_cond = args[0];
-        String log_str_current = log_str;
-        String cap_str_current = cap_str;
-        String str_c = "";
-        String str_t = "";
-
-        for (String arg : args) {
-            if (k%2 ==0) {
-                Set<String> r = new HashSet<String>(Arrays.asList(arg.split(",")));
-                s.addAll(r);
-                r_cond = arg;
-            } else {
-                inc_c(r_cond, arg); //We need the robot cond to have access to the "size" of the robot in the capacity
-                inc_t( arg);
-                str_c = cap_str;
-                str_t = log_str;
-            }
-            k+=1;
-        }
-
-        cap_str = cap_str_current;
-        log_str = log_str_current;
-
-        //Map initializations
-        Map<String,Integer> map_t;
-        map_t = string2map(str_t);
-        Set<String> keys_t = map_t.keySet();
-        Iterator<String> it_t = keys_t.iterator();
-        Map<String,Integer> map_c;
-        map_c = string2map(str_c);
-        Set<String> keys_c = map_c.keySet();
-        Iterator<String> it_c = keys_c.iterator();
-
-        //As a security, we verify that the logical state multiset does not have negative elements
-        while(it_t.hasNext()) {
-            String next = it_t.next();
-            if (map_t.get(next)<0 ) {
-                return false;
-            }
-        }
-        //We verify that the capacity multiset does not have negative elements (condition on full capacity)
-        while(it_c.hasNext()) {
-            String next = it_c.next();
-            if (map_c.get(next)<0 || map_c.get(next)>cap_map_init.get(next)) {
-                return false;
-            }
-        }
-
-        // Verifies if the buchi is not in contradiction with the entry logical state (eg: no robots in a if !a)
-        while(it_t.hasNext()) {
-            String next = it_t.next();
-            String el = "!" + next;
-            if (b.contains(el) && !map_t.get(next).equals(0)) {
-                return false;
-            }
-        }
-        //Counts the number of not negated elements in the buchi formula
-        for(String s1 : b) {
-            if(s1.charAt(0) != '!') {
-                x1=x1+1;
-            }
-        }
-
-        //Checks the verification of the buchi formula by robots movements
-        if (buchi.equals("1")) {
-            return true;
-        } else {
-            for(String buc : b) {
-                for(String rob : s) {
-                    if(negated(buc,rob)) {      //Verifies incompatibility
-                        return false;
-                    } else if(buc.charAt(0) != '!' && buc.equals(rob)) {
-                        x2=x2+1;
-                    }
+    //---------------------------------------------------------------------------
+    // Efficiency must be improved!!!!
+    // Pre: f1="a,!b,c",f2="d,b,c",and neither f1 nor f2 have contradictions
+    // Post: Can we find some "x" and "!x"?
+    public static boolean isThereAContradiction(String f1,String f2) {
+        String[] sF1 = f1.split(",");
+        String[] sF2 = f2.split(",");
+        for (String s1 : sF1) {
+            for(String s2 : sF2) {
+                // System.out.println(s1 + "-" + s2);
+                if (s1.startsWith("!") && (s2.equals(s1.substring(1)))) {
+                    return true;
+                }
+                if (s2.startsWith("!") && (s1.equals(s2.substring(1)))) {
+                    return true;
                 }
             }
         }
+        return false;
+    }
 
-        if(x1==x2) {
-            return true;
-        } else {
+    // "FormPresAndPosts" is a number of triples of the form "String robotForm,String PreCap,String PostCap"
+    public static boolean gef_many(String buchForm,String... FormPresAndPosts) {
+        SMultiSet preMS = new SMultiSet();
+        SMultiSet postMS = new SMultiSet();
+        String robotForm = "";
+
+        int nRobots = FormPresAndPosts.length / 3;
+
+        int pos = 0;
+        for (int r=0;r<nRobots;r++) {
+            //[pos]: buchi formula; [pos+1]: pre multiset; [pos+2]: post multiset;
+
+            // not necessary, since robot formulas HAVE NOT NEGATIONS in the new approach
+            // if (isThereAContradiction(robotForm,FormPresAndPosts[pos])) {
+            //     return false;
+            // }
+            robotForm = robotForm + "," + FormPresAndPosts[pos];
+            preMS.add(new SMultiSet(FormPresAndPosts[pos+1]));
+            postMS.add(new SMultiSet(FormPresAndPosts[pos+2]));
+            pos += 3;
+        }
+
+        return gef_one(buchForm,robotForm,preMS,postMS);
+    }
+
+    // "buchForm" is of the form "b1,b2,!b3,!b4"
+    // "robotForm" is of the form "b1,b5" (no negations): after execution, b1&b5
+    // "capChange" is a P-multiset establishing the "partitionOcc" variation: neg components
+    // represent cap resources engaged, positive values resources freed
+    // Computes gef value for one robot transition
+    public static boolean gef_one(String buchForm,String robotForm,SMultiSet preMS,SMultiSet postMS) {
+        SMultiSet buchMS = new SMultiSet(buchForm);
+        SMultiSet robotMS = new SMultiSet(robotForm);
+
+        // capacity must be greaterOrEqual than the new necessities
+        SMultiSet newPartitionOccBag = capBag.add(partitionOccBag,preMS);
+
+
+        if (!capBag.greaterOrEqual(newPartitionOccBag)) {
             return false;
         }
-    }
 
-    //However, the Renew Software does not support it, so we are obliged to adapt the entry depending on the number of robots
-    public static boolean synchro(String buchi, String robot1, String cond1) {
-        String[] args = new String[] {robot1, cond1};
-        return synchro(buchi, args);
-    }
+        // Is buchForm true?
+        if (buchForm == "1") {
+            return true;
+        }
+        //since pre is verified, we must also add the freed resources
+        newPartitionOccBag.add(postMS);
 
-    public static boolean synchro(String buchi, String robot1, String cond1, String robot2, String cond2) {
-        String[] args = new String[] {robot1, cond1,robot2, cond2};
-        return synchro(buchi, args);
-    }
-
-    public static boolean synchro(String buchi, String robot1, String cond1, String robot2, String cond2, String robot3, String cond3) {
-        String[] args = new String[] {robot1, cond1,robot2, cond2,robot3, cond3};
-        return synchro(buchi, args);
-    }
-
-
-
-    //Function updating the logical state multiset
-    public static void inc_t(String cond) {
-        Map<String,Integer> map_t = string2map(log_str);
-        Map<String,Integer> map_cond = string2map(cond);
-        Set<String> keys_cond = map_cond.keySet();
-        Iterator<String> it_cond = keys_cond.iterator();
-
-        while (it_cond.hasNext()) {
-            String next = it_cond.next();
-            if(!map_t.containsKey(next)) {
-                map_t.put(next,map_cond.get(next));
-            } else {
-                map_t.put(next,map_t.get(next)+map_cond.get(next));
+        // Last part of the algorithm, line 12 ...
+        Set<String> tS = buchMS.keySet();
+        
+        for (String b : B) {
+            int rOcc = ROIOccupancy(newPartitionOccBag,b);
+            if (tS.contains(b) && (rOcc == 0)) {
+                return false;
+            }
+            if (tS.contains("!"+b) && (rOcc >= 1)) {
+                return false;
             }
         }
-
-        log_str = map2string(map_t);
+        
+        return true;
     }
 
-    //This function takes an unknown number of entries : for the unknown number of robots that can be taken into account within a
-    //System Net transition.
-    public static void inc_t(String... args) {
-        for(String arg : args) {
-            inc_t(arg);
+    public static boolean gef(String buchForm,String robForm1,String PreCap,String PostCap) {
+        return gef_many(buchForm,robForm1,PreCap,PostCap);
+    }
+
+    public static boolean gef(String buchForm,
+                              String robotForm1,String PreCap1,String PostCap1,
+                              String robotForm2,String PreCap2,String PostCap2) {
+        return gef_many(buchForm,robotForm1,PreCap1,PostCap1,robotForm2,PreCap2,PostCap2);
+    }
+
+    public static boolean gef(String buchForm,
+                              String robotForm1,String PreCap1,String PostCap1,
+                              String robotForm2,String PreCap2,String PostCap2,
+                              String robotForm3,String PreCap3,String PostCap3) {
+        return gef_many(buchForm,robotForm1,PreCap1,PostCap1,robotForm2,PreCap2,PostCap2,robotForm3,PreCap3,PostCap3);
+    }
+    //---------------------------------------------------------------------------
+    // "PrePost" is a number of pairs of the form "preMS,postMS" 
+    public static void updateCap_many(String... PrePost) {
+        SMultiSet preMS = new SMultiSet();
+        SMultiSet postMS = new SMultiSet();
+        int nPairs = PrePost.length / 2;
+
+        int pos = 0;
+        for (int p=0;p<nPairs;p++) {
+            //[pos]: pre multiset; [pos+1]: post multiset
+            partitionOccBag.add(new SMultiSet(PrePost[pos])); //engaging new capacity
+            partitionOccBag.diff(new SMultiSet(PrePost[pos+1])); //freeing capacity
+            pos += 2;
         }
     }
-
-    //However, the Renew Software does not support it, so we are obliged to adapt the entry depending on the number of robots
-    public static void inc_t(String cond1,String cond2) {
-        String[] args = new String[] { cond1, cond2};
-        inc_t(args);
-    }
-
-    public static void inc_t(String cond1,String cond2,  String cond3) {
-        String[] args = new String[] {cond1, cond2, cond3};
-        inc_t(args);
-    }
-
-    public static void inc_t(String cond1,String cond2,  String cond3, String cond4) {
-        String[] args = new String[] {cond1, cond2, cond3, cond4};
-        inc_t(args);
-    }
-
-    public static void inc_t(String cond1,String cond2,  String cond3, String cond4,  String cond5) {
-        String[] args = new String[] {cond1, cond2, cond3, cond4, cond5};
-        inc_t(args);
-    }
-
-    public static void inc_t(String cond1,String cond2,  String cond3, String cond4,  String cond5,  String cond6) {
-        String[] args = new String[] {cond1, cond2, cond3, cond4, cond5, cond6};
-        inc_t(args);
-    }
-
-    public static void inc_c(String robot, String cond) {
-        Map<String,Integer> map_c = string2map(cap_str);
-        Map<String,Integer> map_mt = string2map(cond);
-        Set<String> keys_ms = map_mt.keySet();
-        Set<String> r = new HashSet<String>(Arrays.asList(robot.split(",")));
-        int size = map_mt.get(keys_ms.toArray()[0]);
-        Set<String> s_post = new HashSet<String>();
-        Set<String> s_pre = new HashSet<String>();
-
-        for (String rob : r) {
-            if (rob.charAt(0) != '!') {
-                if (!map_mt.containsKey(rob)) {
-                    s_pre.add(rob);
-                }
-                s_post.add(rob);
-            } else {
-                s_pre.add(String.valueOf(rob.charAt(1)));
-            }
-        }
-
-        List<String> s_pre_l = new ArrayList<String>();
-        s_pre_l.addAll(s_pre);
-        List<String> s_post_l = new ArrayList<String>();
-        s_post_l.addAll(s_post);
-
-        Collections.sort(s_pre_l);
-        Collections.sort(s_post_l);
-
-        String s_pre_str = null;
-        String s_post_str= null;
-        int k_pre=0;
-        int k_post =0;
-
-        if (!s_pre_l.isEmpty()) {
-            for( String pre : s_pre_l) {
-                if (k_pre==0) {
-                    s_pre_str = pre;
-                } else {
-                    s_pre_str+= "." + pre;
-                }
-                k_pre+=1;
-            }
-            int init_pre = 0;
-            if (map_c.containsKey(s_pre_str)) {
-                init_pre = map_c.get(s_pre_str);
-            }
-            map_c.put(s_pre_str,init_pre+Math.abs(size));
-        }
-
-        if (!s_post_l.isEmpty()) {
-            for( String post : s_post_l) {
-                if (k_post==0) {
-                    s_post_str= post;
-                } else {
-                    s_post_str+= "." + post;
-                }
-                k_post+=1;
-            }
-            int init_post = 0;
-            if (map_c.containsKey(s_post_str)) {
-                init_post = map_c.get(s_post_str);
-            }
-            map_c.put(s_post_str,init_post-Math.abs(size));
-        }
-        cap_str = map2string(map_c);
-    }
-
-    //This function takes an unknown number of entries : for the unknown number of robots that can be taken into account within a
-    //System Net transition.
-    public static void inc_c(String... args) {
-        int k=0;
-        String robot = args[0];
-
-        for (String arg : args) {
-            if (k%2 ==0) {
-                robot = arg;
-            } else {
-                inc_c(robot, arg);
-            }
-            k+=1;
-        }
-    }
-
-    //However, the Renew Software does not support it, so we are obliged to adapt the entry depending on the number of robots
-    public static void inc_c(String robot1, String cond1, String robot2, String cond2) {
-        String[] args = new String[] {robot1, cond1, robot2, cond2};
-        inc_c(args);
-    }
-
-    public static void inc_c(String robot1, String cond1, String robot2, String cond2, String robot3, String cond3) {
-        String[] args = new String[] {robot1, cond1,robot2, cond2,robot3, cond3};
-        inc_c(args);
-    }
-
-    public static void inc_c(String robot1, String cond1, String robot2, String cond2, String robot3, String cond3, String robot4, String cond4) {
-        String[] args = new String[] {robot1, cond1,robot2, cond2,robot3, cond3,robot4, cond4};
-        inc_c(args);
-    }
-
-    public static void inc_c(String robot1, String cond1, String robot2, String cond2, String robot3, String cond3, String robot4, String cond4, String robot5, String cond5) {
-        String[] args = new String[] {robot1, cond1,robot2, cond2,robot3, cond3,robot4, cond4,robot5, cond5};
-        inc_c(args);
-    }
-
-    public static void inc_c(String robot1, String cond1, String robot2, String cond2, String robot3, String cond3, String robot4, String cond4, String robot5, String cond5, String robot6, String cond6) {
-        String[] args = new String[] {robot1, cond1,robot2, cond2,robot3, cond3,robot4, cond4,robot5, cond5, robot6, cond6};
-        inc_c(args);
-    }
-
-
     
-// Given two solution paths, returns the "best" one. In this version,
-// "best" means less steps in the mission net (in a solution, steps are
-// in the string separated by means of '\n')
-public static String select_best(String oldV, String newV) {
-    //Java8: counts the number of '\n' in a string
-    long oldVc = oldV.chars().filter(nl -> nl == '\n').count();
-    long newVc = newV.chars().filter(nl -> nl == '\n').count();
-    if ((oldVc == 0) || (oldVc > newVc)) {//initial case or new is longer
-       return newV;
+    public static void updateCap(String pre1,String post1) {
+        updateCap_many(pre1,post1);
     }
-    else {
-       return oldV;
+
+    public static void updateCap(String pre1,String post1,String pre2,String post2) {
+        updateCap_many(pre1,post1,pre2,post2);
     }
- } 
 
-    //User Interface for testing
-    public static void main(String[] arg) {
-        Scanner terminalInput = new Scanner(System.in);
-        String bu,rob1,cond1,tup,rob2,cond2,rob3,cond3, capacity;
-
-        System.out.print("bu: ");
-        bu = terminalInput.nextLine();
-        while (bu.length() != 0) {
-            System.out.print("rob1: ");
-            rob1 = terminalInput.nextLine();
-            System.out.print("cond1: ");
-            cond1 = terminalInput.nextLine();
-            System.out.print("rob2: ");
-            rob2 = terminalInput.nextLine();
-            System.out.print("cond2: ");
-            cond2 = terminalInput.nextLine();
-            System.out.print("cap: ");
-            capacity = terminalInput.nextLine();
-            System.out.print("tup: ");
-            tup = terminalInput.nextLine();
-            cap_str=capacity;
-            log_str = tup;
-            System.out.println(synchro(bu,rob1,cond1,rob2, cond2));
-            //System.out.println(inc_t(cond1,cond2));
-            //System.out.println(inc_c(rob1,cond1,rob2,cond2));
-            System.out.print("bu: ");
-            bu = terminalInput.nextLine();
+    public static void updateCap(String pre1,String post1,String pre2,String post2,String pre3,String post3) {
+        updateCap_many(pre1,post1,pre2,post2,pre3,post3);
+    }
+    //---------------------------------------------------------------------------
+    // Given two solution paths, returns the "best" one. In this version,
+    // "best" means less steps in the mission net (in a solution, steps are
+    // in the string separated by means of '\n')
+    public static String select_best(String oldV, String newV) {
+        //Java8: counts the number of '\n' in a string
+        long oldVc = oldV.chars().filter(nl -> nl == '\n').count();
+        long newVc = newV.chars().filter(nl -> nl == '\n').count();
+        if ((oldVc == 0) || (oldVc > newVc)) {//initial case or new is longer
+           return newV;
         }
+        else {
+           return oldV;
+        }
+     } 
+    //---------------------------------------------------------------------------
+    // "b" is a ROI, "partitionOccBag" is an occupancy multiset
+    // returns the marking of places p\in P such that b\in h(p)
+    // TODO, not tested
+    private static int ROIOccupancy(SMultiSet partitionOccBag,String b) {
+        int res = 0;
+        for (String key : partitionOccBag.keySet()) {
+
+            if (hBag.get(key).contains(b)) {
+                res = res + partitionOccBag.getVal(key);
+            }
+        }
+
+        return res;
+    }
+    //---------------------------------------------------------------------------
+    //For testing
+    public static void main(String[] arg) {
+        String cap = "1'p1,1'p2,1'p3,4'p4,1'p5";
+        String partOcc = "3'p4";
+        String h = "p1,b1|p2,b2,b3|p3,b2|p4,b4|p5,b3";
+        Eval eval = new Eval(cap,partOcc,h);
+
+        System.out.println("h:" + h2string(h2bag(h)));
+        System.out.println("b4: " + ROIOccupancy(partitionOccBag,"b4"));
+        System.out.println("b1: " + ROIOccupancy(partitionOccBag,"b1"));
+        System.out.println("partitionOccBag:" + partitionOccBag.toString());
+
+        // move from p1 to p5
+        if(gef("b4","b1","1'p1","1'p4")) {
+            System.out.println("OK");
+            updateCap("1'p1","1'p4");
+            System.out.println("new occ:" + partitionOccBag.toString());
+        }
+        else {
+            System.out.println("A bad situation");
+        }
+
+        System.out.println(isThereAContradiction("a,b","a,c"));
+        System.out.println(isThereAContradiction("a,b","c,!b"));
+        
     }
 }
